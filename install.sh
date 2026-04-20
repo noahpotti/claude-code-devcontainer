@@ -14,6 +14,12 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 SCRIPT_NAME="$(basename "$0")"
 
+SANDBOX_SUBDIR=".devcontainer/sandbox"
+
+dc_config_path() {
+  echo "$1/$SANDBOX_SUBDIR/devcontainer.json"
+}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -86,7 +92,8 @@ check_devcontainer_cli() {
 
 check_no_sys_admin() {
   local workspace="${1:-.}"
-  local dc_json="$workspace/.devcontainer/devcontainer.json"
+  local dc_json
+  dc_json="$(dc_config_path "$workspace")"
   [[ -f "$dc_json" ]] || return 0
   if jq -e \
     '.runArgs[]? | select(test("SYS_ADMIN"))' \
@@ -186,7 +193,7 @@ cmd_template() {
     exit 1
   }
 
-  local devcontainer_dir="$target_dir/.devcontainer"
+  local devcontainer_dir="$target_dir/$SANDBOX_SUBDIR"
   local devcontainer_json="$devcontainer_dir/devcontainer.json"
   local preserved_mounts=""
 
@@ -232,7 +239,7 @@ cmd_up() {
   check_no_sys_admin "$workspace_folder"
   log_info "Starting devcontainer in $workspace_folder..."
 
-  devcontainer up --workspace-folder "$workspace_folder"
+  devcontainer up --workspace-folder "$workspace_folder" --config "$(dc_config_path "$workspace_folder")"
   log_success "Devcontainer started"
 }
 
@@ -244,7 +251,7 @@ cmd_rebuild() {
   check_no_sys_admin "$workspace_folder"
   log_info "Rebuilding devcontainer in $workspace_folder..."
 
-  devcontainer up --workspace-folder "$workspace_folder" --remove-existing-container
+  devcontainer up --workspace-folder "$workspace_folder" --config "$(dc_config_path "$workspace_folder")" --remove-existing-container
   log_success "Devcontainer rebuilt"
 }
 
@@ -275,7 +282,7 @@ cmd_shell() {
   check_devcontainer_cli
   log_info "Opening shell in devcontainer..."
 
-  devcontainer exec --workspace-folder "$workspace_folder" zsh
+  devcontainer exec --workspace-folder "$workspace_folder" --config "$(dc_config_path "$workspace_folder")" zsh
 }
 
 cmd_exec() {
@@ -283,7 +290,7 @@ cmd_exec() {
   workspace_folder="$(get_workspace_folder)"
 
   check_devcontainer_cli
-  devcontainer exec --workspace-folder "$workspace_folder" "$@"
+  devcontainer exec --workspace-folder "$workspace_folder" --config "$(dc_config_path "$workspace_folder")" "$@"
 }
 
 cmd_upgrade() {
@@ -293,7 +300,7 @@ cmd_upgrade() {
   check_devcontainer_cli
   log_info "Upgrading Claude Code..."
 
-  devcontainer exec --workspace-folder "$workspace_folder" claude update
+  devcontainer exec --workspace-folder "$workspace_folder" --config "$(dc_config_path "$workspace_folder")" claude update
 
   log_success "Claude Code upgraded"
 }
@@ -318,7 +325,8 @@ cmd_mount() {
 
   local workspace_folder
   workspace_folder="$(get_workspace_folder)"
-  local devcontainer_json="$workspace_folder/.devcontainer/devcontainer.json"
+  local devcontainer_json
+  devcontainer_json="$(dc_config_path "$workspace_folder")"
 
   if [[ ! -f "$devcontainer_json" ]]; then
     log_error "No devcontainer.json found. Run 'devc template' first."
@@ -331,7 +339,7 @@ cmd_mount() {
   update_devcontainer_mounts "$devcontainer_json" "$host_path" "$container_path" "$readonly"
 
   log_info "Recreating container with new mount..."
-  devcontainer up --workspace-folder "$workspace_folder" --remove-existing-container
+  devcontainer up --workspace-folder "$workspace_folder" --config "$devcontainer_json" --remove-existing-container
 
   log_success "Mount added: $host_path → $container_path"
 }

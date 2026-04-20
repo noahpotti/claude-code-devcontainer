@@ -82,19 +82,16 @@ devc shell      # Opens shell in container
    - VS Code: `ms-vscode-remote.remote-containers`
    - Cursor: `anysphere.remote-containers`
 
-2. Set up the devcontainer (choose one):
+2. Set up the devcontainer:
 
    ```bash
-   # Option A: Use devc (recommended)
    devc .
-
-   # Option B: Clone manually
-   git clone https://github.com/trailofbits/claude-code-devcontainer .devcontainer/
    ```
 
 3. Open **your project folder** in VS Code, then:
    - Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows/Linux)
    - Type "Reopen in Container" and select **Dev Containers: Reopen in Container**
+   - If the project has other devcontainer configs, VS Code will show a picker — choose **Claude Code Sandbox**
 
 ### Pattern B: Shared Workspace Container (Grouped)
 
