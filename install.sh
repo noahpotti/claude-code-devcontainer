@@ -40,6 +40,7 @@ Commands:
     self-install        Install 'devc' command to ~/.local/bin
     update              Update devc to the latest version
     template [dir]      Copy devcontainer template to directory (default: current)
+    open [dir]          Install template and open in VS Code (prompts reopen in container)
     exec <cmd>          Execute a command in the running container
     upgrade             Upgrade Claude Code to latest version
     mount <host> <cont> Add a mount to the devcontainer (recreates container)
@@ -56,6 +57,7 @@ Examples:
     devc self-install           # Install devc to PATH
     devc update                 # Update to latest version
     devc exec ls -la            # Run command in container
+    devc open ~/projects/target  # Install template + open in VS Code
     devc upgrade                # Upgrade Claude Code to latest
     devc mount ~/data /data     # Add mount to container
     devc sync                   # Sync sessions from all devcontainers
@@ -188,6 +190,9 @@ update_devcontainer_mounts() {
 
 cmd_template() {
   local target_dir="${1:-.}"
+  local force=false
+  [[ "${2:-}" == "-y" || "${2:-}" == "--yes" ]] && force=true
+
   target_dir="$(cd "$target_dir" 2>/dev/null && pwd)" || {
     log_error "Directory does not exist: $1"
     exit 1
@@ -198,12 +203,14 @@ cmd_template() {
   local preserved_mounts=""
 
   if [[ -d "$devcontainer_dir" ]]; then
-    log_warn "Devcontainer already exists at $devcontainer_dir"
-    read -p "Overwrite? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-      log_info "Aborted."
-      exit 0
+    if [[ "$force" != true ]]; then
+      log_warn "Devcontainer already exists at $devcontainer_dir"
+      read -p "Overwrite? [y/N] " -n 1 -r
+      echo
+      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        log_info "Aborted."
+        exit 0
+      fi
     fi
 
     # Preserve custom mounts before overwriting
@@ -220,6 +227,7 @@ cmd_template() {
   cp "$SCRIPT_DIR/devcontainer.json" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/post_install.py" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/.zshrc" "$devcontainer_dir/"
+  cp "$SCRIPT_DIR/SANDBOX.md" "$devcontainer_dir/"
 
   # Restore preserved mounts
   if [[ -n "$preserved_mounts" ]]; then
@@ -650,6 +658,19 @@ cmd_dot() {
   cmd_up "."
 }
 
+cmd_open() {
+  local target_dir="${1:-.}"
+  target_dir="$(cd "$target_dir" 2>/dev/null && pwd)" || {
+    log_error "Directory does not exist: ${1:-.}"
+    exit 1
+  }
+
+  cmd_template "$target_dir" -y
+  log_info "Opening in VS Code..."
+  code "$target_dir"
+  log_success "VS Code will prompt to reopen in container"
+}
+
 # Discovers all Docker resources associated with the current workspace.
 # Sets global variables: CONTAINER_ID, CONTAINER_STATUS, VOLUMES (array), IMAGE, IMAGE_UID
 discover_resources() {
@@ -812,6 +833,9 @@ main() {
   case "$command" in
   .)
     cmd_dot
+    ;;
+  open)
+    cmd_open "$@"
     ;;
   up)
     cmd_up "$@"

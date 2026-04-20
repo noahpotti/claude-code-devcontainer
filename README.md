@@ -76,22 +76,17 @@ devc .          # Installs template + starts container
 devc shell      # Opens shell in container
 ```
 
-**VS Code / Cursor:**
+**VS Code / Cursor (from terminal):**
 
-1. Install the Dev Containers extension:
-   - VS Code: `ms-vscode-remote.remote-containers`
-   - Cursor: `anysphere.remote-containers`
+```bash
+devc open .     # Installs sandbox config + opens folder in VS Code
+```
 
-2. Set up the devcontainer:
+VS Code detects the config and prompts **"Reopen in Container"**. If the project has its own devcontainer configs, a picker appears — choose **Claude Code Sandbox**.
 
-   ```bash
-   devc .
-   ```
+**VS Code / Cursor (GUI-only keybinding):**
 
-3. Open **your project folder** in VS Code, then:
-   - Press `Cmd+Shift+P` (Mac) or `Ctrl+Shift+P` (Windows/Linux)
-   - Type "Reopen in Container" and select **Dev Containers: Reopen in Container**
-   - If the project has other devcontainer configs, VS Code will show a picker — choose **Claude Code Sandbox**
+See [VS Code GUI Workflow](#vs-code-gui-workflow) below for a keybinding-based flow that works without a terminal.
 
 ### Pattern B: Shared Workspace Container (Grouped)
 
@@ -140,11 +135,73 @@ devc exec CMD       Execute command inside the container
 devc upgrade        Upgrade Claude Code in the container
 devc mount SRC DST  Add a bind mount (host → container)
 devc sync [NAME]    Sync Claude Code sessions from devcontainers to host
+devc open [DIR]     Install template + open in VS Code (prompts reopen in container)
 devc template DIR   Copy devcontainer files to directory
 devc self-install   Install devc to ~/.local/bin
 ```
 
 > **Note:** Use `devc destroy` to clean up a project's Docker resources. Removing containers manually (e.g., `docker rm`) will leave orphaned volumes and images behind that `devc destroy` won't be able to find.
+
+## VS Code GUI Workflow
+
+If you prefer working entirely from VS Code without a terminal, you can set up a keybinding to install the sandbox config into any open folder, then reopen in the container.
+
+### Setup (one-time)
+
+1. Install the Dev Containers extension:
+   - VS Code: `ms-vscode-remote.remote-containers`
+   - Cursor: `anysphere.remote-containers`
+
+2. Install the task and keybinding:
+
+   ```bash
+   # VS Code user tasks
+   cat <<'EOF' > "$HOME/Library/Application Support/Code/User/tasks.json"
+   {
+     "version": "2.0.0",
+     "tasks": [
+       {
+         "label": "Sandbox: Install Config",
+         "type": "shell",
+         "command": "devc template . -y",
+         "presentation": { "reveal": "silent", "close": true },
+         "problemMatcher": []
+       }
+     ]
+   }
+   EOF
+
+   # VS Code keybinding (Ctrl+Shift+D)
+   cat <<'EOF' > "$HOME/Library/Application Support/Code/User/keybindings.json"
+   [
+     {
+       "key": "ctrl+shift+d",
+       "command": "runCommands",
+       "args": {
+         "commands": [
+           {
+             "command": "workbench.action.tasks.runTask",
+             "args": "Sandbox: Install Config"
+           }
+         ]
+       }
+     }
+   ]
+   EOF
+   ```
+
+   > **Note:** These commands overwrite existing `tasks.json` and `keybindings.json`. If you have existing config, merge the entries manually via `Cmd+Shift+P` → **Tasks: Open User Tasks** and **Preferences: Open Keyboard Shortcuts (JSON)**.
+
+### Usage
+
+1. Open any folder in VS Code
+2. Press `Ctrl+Shift+D` — silently installs the sandbox config into `.devcontainer/sandbox/`
+3. `Cmd+Shift+P` → **Dev Containers: Reopen in Container**
+4. If the project has multiple devcontainer configs, pick **Claude Code Sandbox** from the list
+
+Steps 2-3 are the full workflow — no terminal needed. The sandbox config coexists with any existing project devcontainer configs.
+
+> **Note:** The first build takes about a minute while Docker builds the image. Subsequent containers reuse the cached image and start in seconds.
 
 ## Session Sync for `/insights`
 
@@ -218,6 +275,8 @@ This devcontainer provides **filesystem isolation** but not complete sandboxing.
 **Not sandboxed:** Network (full outbound by default—see [Network Isolation](#network-isolation)), git identity (`~/.gitconfig` mounted read-only), Docker socket (not mounted by default)
 
 The container auto-configures `bypassPermissions` mode—Claude runs commands without confirmation. This would be risky on a host machine, but the container itself is the sandbox.
+
+See [`SANDBOX.md`](SANDBOX.md) for a concise reference of what the container can and cannot access. This file is also copied into `.devcontainer/sandbox/` when you run `devc template`.
 
 ## Container Details
 
