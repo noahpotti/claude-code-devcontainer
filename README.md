@@ -1,347 +1,254 @@
-# Claude Code in a devcontainer
+# Claude Code Sandbox
 
-A sandboxed development environment for running Claude Code with `bypassPermissions` safely enabled. Built at [Trail of Bits](https://www.trailofbits.com/) for security audit workflows.
+A devcontainer that runs Claude Code with `bypassPermissions` safely enabled, so you can let it modify code freely without risking your host. Built at [Trail of Bits](https://www.trailofbits.com/) for security audit workflows — useful any time you'd rather Claude not touch your host filesystem.
 
-## Why Use This?
+> **Heads up:** outbound network access is **unrestricted by default**. The container provides filesystem isolation, not network isolation. See [Network isolation](#network-isolation) below to lock it down with iptables.
 
-Running Claude with `bypassPermissions` on your host machine is risky—it can execute any command without confirmation. This devcontainer provides **filesystem isolation** so you get the productivity benefits of unrestricted Claude without risking your host system.
+## Install
 
-**Designed for:**
-
-- **Security audits**: Review client code without risking your host
-- **Untrusted repositories**: Explore unknown codebases safely
-- **Experimental work**: Let Claude modify code freely in isolation
-- **Multi-repo engagements**: Work on multiple related repositories
-
-## Prerequisites
-
-- **Docker runtime** (one of):
-  - [Docker Desktop](https://docker.com/products/docker-desktop) - ensure it's running
-  - [OrbStack](https://orbstack.dev/)
-  - [Colima](https://github.com/abiosoft/colima): `brew install colima docker && colima start`
-
-- **For terminal workflows** (one-time install):
-
-  ```bash
-  npm install -g @devcontainers/cli
-  git clone https://github.com/trailofbits/claude-code-devcontainer ~/.claude-devcontainer
-  ~/.claude-devcontainer/install.sh self-install
-  ```
-
-<details>
-<summary><strong>Optimizing Colima for Apple Silicon</strong></summary>
-
-Colima's defaults (QEMU + sshfs) are conservative. For better performance:
+You need a Docker runtime — [Docker Desktop](https://docker.com/products/docker-desktop), [OrbStack](https://orbstack.dev/), or [Colima](https://github.com/abiosoft/colima) — running. Then:
 
 ```bash
-# Stop and delete current VM (removes containers/images)
-colima stop && colima delete
-
-# Start with optimized settings
-colima start \
-  --cpu 4 \
-  --memory 8 \
-  --disk 100 \
-  --vm-type vz \
-  --vz-rosetta \
-  --mount-type virtiofs
+npm install -g @devcontainers/cli
+git clone https://github.com/trailofbits/claude-code-devcontainer ~/.claude-devcontainer
+~/.claude-devcontainer/install.sh self-install
 ```
 
-Adjust `--cpu` and `--memory` based on your Mac (e.g., 6/16 for Pro, 8/32 for Max).
+This installs the `devc` command to `~/.local/bin`. Make sure that's on your `PATH`.
 
-| Option | Benefit |
-|--------|---------|
-| `--vm-type vz` | Apple Virtualization.framework (faster than QEMU) |
-| `--mount-type virtiofs` | 5-10x faster file I/O than sshfs |
-| `--vz-rosetta` | Run x86 containers via Rosetta |
+> **Tip:** If you'd rather sandbox folders entirely from VS Code's GUI (open any folder → `Ctrl+Shift+D` → `Cmd+Shift+P` → Reopen in Container), see [GUI-only workflow](#gui-only-workflow-no-terminal) below for a one-time keybinding setup.
 
-Verify with `colima status` - should show "macOS Virtualization.Framework" and "virtiofs".
+## Use it
 
-</details>
+### From VS Code (recommended)
 
-## Quick Start
-
-Choose the pattern that fits your workflow:
-
-### Pattern A: Per-Project Container (Isolated)
-
-Each project gets its own container with independent volumes. Best for one-off reviews, untrusted repos, or when you need isolation between projects.
-
-**Terminal:**
+Install the Dev Containers extension (`ms-vscode-remote.remote-containers` for VS Code, `anysphere.remote-containers` for Cursor), then in the directory you want to work in:
 
 ```bash
-git clone <untrusted-repo>
-cd untrusted-repo
-devc .          # Installs template + starts container
-devc shell      # Opens shell in container
+devc open .
 ```
 
-**VS Code / Cursor (from terminal):**
+VS Code opens the folder and prompts **"Reopen in Container"**. Click it. After ~1 minute on first build (Docker image), Claude Code is ready inside an isolated container with full access to that folder and nothing else on your host.
+
+If the project already has its own devcontainer config, VS Code shows a picker — choose **Claude Code Sandbox**.
+
+### From terminal
 
 ```bash
-devc open .     # Installs sandbox config + opens folder in VS Code
+devc .          # Install template + start container
+devc shell      # Drop into zsh inside the container
+claude          # Start Claude Code
 ```
 
-VS Code detects the config and prompts **"Reopen in Container"**. If the project has its own devcontainer configs, a picker appears — choose **Claude Code Sandbox**.
+## Skip the login prompt
 
-**VS Code / Cursor (GUI-only keybinding):**
-
-See [VS Code GUI Workflow](#vs-code-gui-workflow) below for a keybinding-based flow that works without a terminal.
-
-### Pattern B: Shared Workspace Container (Grouped)
-
-A parent directory contains the devcontainer config, and you clone multiple repos inside. Shared volumes across all repos. Best for client engagements, related repositories, or ongoing work.
+By default, Claude Code shows the interactive login wizard every time a new container is created. To skip it:
 
 ```bash
-# Create workspace for a client engagement
+claude setup-token                                  # on host, one-time
+echo 'export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat...' >> ~/.zshrc
+```
+
+Restart your shell (and VS Code, if it was open). The token forwards into every container automatically. This works around [anthropics/claude-code#8938](https://github.com/anthropics/claude-code/issues/8938).
+
+## Threat model & sandboxing
+
+The threat this project addresses: **Claude Code running arbitrary commands on your host machine.** With `bypassPermissions` enabled, Claude can `rm -rf` outside your project, modify your shell config, or abuse stored credentials. The devcontainer confines all of that to a disposable container where the blast radius is `/workspace`.
+
+The container ships with common dev tooling so you can do all your work inside it — not just Claude. Intended workflow: clone a repo, start the devcontainer, work entirely within it. Add tools to the Dockerfile for reuse, or install ad-hoc with `devc exec`.
+
+**Sandboxed:**
+- **Filesystem** — container sees `/workspace` and a read-only `~/.gitconfig`. Host files are inaccessible.
+- **Config integrity** — `.devcontainer/`, `.git/config`, and `.git/hooks` are mounted read-only inside the container, blocking config-injection and git-hook escape vectors.
+- **Persistent state** — Claude auth, shell history, and `gh` login persist via Docker volumes. Destroyed by `devc destroy`.
+
+**Not sandboxed by default:**
+- **Network** — full outbound access (see [Network isolation](#network-isolation))
+- **SSH agent** — the host's `SSH_AUTH_SOCK` is forwarded so the container can `git push` as you. Private key material stays on the host.
+- **Docker socket** — not mounted
+
+See [`SANDBOX.md`](SANDBOX.md) for the full reference and copy-paste firewall rules.
+
+## Commands
+
+| Command | What it does |
+|---------|--------------|
+| `devc open [dir]` | Install template + open in VS Code (prompts reopen in container) |
+| `devc .` | Install template + start container (terminal flow) |
+| `devc up` | Start the container |
+| `devc shell` | Open zsh in the container |
+| `devc exec CMD` | Run a command inside the container |
+| `devc rebuild` | Rebuild container (preserves persistent volumes) |
+| `devc down` | Stop the container |
+| `devc destroy [-f]` | Remove container, volumes, and image for current project |
+| `devc upgrade` | Update Claude Code inside the container |
+| `devc mount SRC DST [--readonly]` | Bind-mount a host path into the container |
+| `devc sync [NAME]` | Copy session logs from devcontainers to host (for `/insights`) |
+| `devc template DIR [-y]` | Copy devcontainer files to a directory |
+| `devc update` | Pull latest version of devc |
+| `devc self-install` | Install devc to `~/.local/bin` |
+
+> **Note:** Always use `devc destroy` to clean up — `docker rm` leaves orphaned volumes and images that `devc destroy` won't be able to find later.
+
+## Advanced
+
+### GUI-only workflow (no terminal)
+
+If you want to install the sandbox config into a folder entirely from VS Code's GUI, add a user task and keybinding once:
+
+```bash
+# VS Code user tasks
+cat <<'EOF' > "$HOME/Library/Application Support/Code/User/tasks.json"
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Sandbox: Install Config",
+      "type": "shell",
+      "command": "devc template . -y",
+      "presentation": { "reveal": "silent", "close": true },
+      "problemMatcher": []
+    }
+  ]
+}
+EOF
+
+# VS Code keybinding (Ctrl+Shift+D)
+cat <<'EOF' > "$HOME/Library/Application Support/Code/User/keybindings.json"
+[
+  {
+    "key": "ctrl+shift+d",
+    "command": "runCommands",
+    "args": {
+      "commands": [
+        { "command": "workbench.action.tasks.runTask", "args": "Sandbox: Install Config" }
+      ]
+    }
+  }
+]
+EOF
+```
+
+> **Note:** These overwrite existing files. Merge manually via `Cmd+Shift+P` → **Tasks: Open User Tasks** / **Preferences: Open Keyboard Shortcuts (JSON)** if you have existing config.
+
+Then in any folder: `Ctrl+Shift+D` (installs config silently) → `Cmd+Shift+P` → **Dev Containers: Reopen in Container** → pick **Claude Code Sandbox**.
+
+### Network isolation
+
+Outbound network is unrestricted by default. To block it, run inside the container:
+
+```bash
+sudo iptables -A OUTPUT -o lo -j ACCEPT                                    # loopback
+sudo iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -A OUTPUT -d api.anthropic.com -j ACCEPT                     # Claude API
+sudo iptables -A OUTPUT -d github.com -j ACCEPT                            # git
+sudo iptables -A OUTPUT -d registry.npmjs.org -j ACCEPT                    # npm (optional)
+sudo iptables -A OUTPUT -j DROP                                            # block everything else
+```
+
+Undo with `sudo iptables -F OUTPUT`. To apply automatically on container start, see [`SANDBOX.md`](SANDBOX.md).
+
+### File sharing
+
+**VS Code:** drag files into the Explorer panel — they copy into `/workspace/` automatically.
+
+**Terminal:** add a bind mount and recreate the container.
+
+```bash
+devc mount ~/drop /drop                    # read-write
+devc mount ~/secrets /secrets --readonly   # read-only
+```
+
+A "drop folder" pattern is useful for passing files in without exposing your home directory. Custom mounts are preserved across `devc template` updates.
+
+> **Security note:** Avoid mounting large host directories (e.g., `$HOME`). Mounted paths are writable from the container unless `--readonly` is set, which undermines the filesystem isolation.
+
+### Multi-repo workspaces
+
+For client engagements with multiple related repos, put the devcontainer config in a parent directory and clone repos inside:
+
+```bash
 mkdir -p ~/sandbox/client-name
 cd ~/sandbox/client-name
-devc .          # Install template + start container
-devc shell      # Opens shell in container
+devc .
+devc shell
 
 # Inside container:
-git clone <client-repo-1>
-git clone <client-repo-2>
-cd client-repo-1
-claude          # Ready to work
+git clone <repo-1>
+git clone <repo-2>
 ```
 
-## Token-Based Auth (Headless)
+All repos share the same container, volumes, and Claude session.
 
-For headless servers or to skip the interactive login wizard:
+### Optimizing Colima for Apple Silicon
+
+Colima's defaults (QEMU + sshfs) are slow. For better performance:
 
 ```bash
-claude setup-token                          # run on host, one-time
-export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
-devc rebuild                                # rebuilds with token
+colima stop && colima delete
+colima start --cpu 4 --memory 8 --disk 100 \
+  --vm-type vz --vz-rosetta --mount-type virtiofs
 ```
 
-The token is forwarded into the container. On each container creation, `post_install.py` runs a one-shot auth handshake so `claude` starts without the login wizard.
+Adjust CPU/memory based on your Mac. `vz` uses Apple's Virtualization.framework (faster than QEMU), `virtiofs` is 5-10x faster than sshfs for file I/O, `--vz-rosetta` enables x86 containers.
 
-This works around Claude Code's interactive onboarding wizard always showing in containers, even with valid credentials ([#8938](https://github.com/anthropics/claude-code/issues/8938)).
+Verify with `colima status` — should show "macOS Virtualization.Framework" and "virtiofs".
 
-If you don't set a token, the interactive login flow works as before.
+### Session sync for `/insights`
 
-## CLI Helper Commands
-
-```
-devc .              Install template + start container in current directory
-devc up             Start the devcontainer
-devc rebuild        Rebuild container (preserves persistent volumes)
-devc destroy [-f]   Remove container, volumes, and image for current project
-devc down           Stop the container
-devc shell          Open zsh shell in container
-devc exec CMD       Execute command inside the container
-devc upgrade        Upgrade Claude Code in the container
-devc mount SRC DST  Add a bind mount (host → container)
-devc sync [NAME]    Sync Claude Code sessions from devcontainers to host
-devc open [DIR]     Install template + open in VS Code (prompts reopen in container)
-devc template DIR   Copy devcontainer files to directory
-devc self-install   Install devc to ~/.local/bin
-```
-
-> **Note:** Use `devc destroy` to clean up a project's Docker resources. Removing containers manually (e.g., `docker rm`) will leave orphaned volumes and images behind that `devc destroy` won't be able to find.
-
-## VS Code GUI Workflow
-
-If you prefer working entirely from VS Code without a terminal, you can set up a keybinding to install the sandbox config into any open folder, then reopen in the container.
-
-### Setup (one-time)
-
-1. Install the Dev Containers extension:
-   - VS Code: `ms-vscode-remote.remote-containers`
-   - Cursor: `anysphere.remote-containers`
-
-2. Install the task and keybinding:
-
-   ```bash
-   # VS Code user tasks
-   cat <<'EOF' > "$HOME/Library/Application Support/Code/User/tasks.json"
-   {
-     "version": "2.0.0",
-     "tasks": [
-       {
-         "label": "Sandbox: Install Config",
-         "type": "shell",
-         "command": "devc template . -y",
-         "presentation": { "reveal": "silent", "close": true },
-         "problemMatcher": []
-       }
-     ]
-   }
-   EOF
-
-   # VS Code keybinding (Ctrl+Shift+D)
-   cat <<'EOF' > "$HOME/Library/Application Support/Code/User/keybindings.json"
-   [
-     {
-       "key": "ctrl+shift+d",
-       "command": "runCommands",
-       "args": {
-         "commands": [
-           {
-             "command": "workbench.action.tasks.runTask",
-             "args": "Sandbox: Install Config"
-           }
-         ]
-       }
-     }
-   ]
-   EOF
-   ```
-
-   > **Note:** These commands overwrite existing `tasks.json` and `keybindings.json`. If you have existing config, merge the entries manually via `Cmd+Shift+P` → **Tasks: Open User Tasks** and **Preferences: Open Keyboard Shortcuts (JSON)**.
-
-### Usage
-
-1. Open any folder in VS Code
-2. Press `Ctrl+Shift+D` — silently installs the sandbox config into `.devcontainer/sandbox/`
-3. `Cmd+Shift+P` → **Dev Containers: Reopen in Container**
-4. If the project has multiple devcontainer configs, pick **Claude Code Sandbox** from the list
-
-Steps 2-3 are the full workflow — no terminal needed. The sandbox config coexists with any existing project devcontainer configs.
-
-> **Note:** The first build takes about a minute while Docker builds the image. Subsequent containers reuse the cached image and start in seconds.
-
-## Session Sync for `/insights`
-
-Claude Code's `/insights` command analyzes your session history, but it only reads from `~/.claude/projects/` on the host. Sessions inside devcontainer volumes are invisible to it.
-
-`devc sync` copies session logs from all devcontainers (running and stopped) to the host so `/insights` can include them:
+Claude's `/insights` command reads from `~/.claude/projects/` on the host, so devcontainer sessions are invisible to it. Sync them with:
 
 ```bash
-devc sync              # Sync all devcontainers
+devc sync              # All devcontainers
 devc sync crypto       # Filter by project name (substring match)
 ```
 
-Devcontainers are auto-discovered via Docker labels — no need to know container names or IDs. The sync is incremental, so it's safe to run repeatedly.
+Sessions are auto-discovered via Docker labels. The sync is incremental and safe to re-run.
 
-## File Sharing
+### Token-based auth on headless servers
 
-### VS Code / Cursor
+Same as the [Skip the login prompt](#skip-the-login-prompt) section above — the token mechanism works identically for headless servers. Set `CLAUDE_CODE_OAUTH_TOKEN` in the host shell environment, run `devc rebuild` if a container already exists.
 
-Drag files from your host into the VS Code Explorer panel — they are copied into `/workspace/` automatically. No configuration needed.
-
-### Terminal: `devc mount`
-
-To make a host directory available inside the container:
-
-```bash
-devc mount ~/drop /drop           # Read-write
-devc mount ~/secrets /secrets --readonly
-```
-
-This adds a bind mount to `devcontainer.json` and recreates the container. Existing mounts are preserved across `devc template` updates.
-
-**Tip:** A shared "drop folder" is useful for passing files in without mounting your entire home directory.
-
-> **Security note:** Avoid mounting large host directories (e.g., `$HOME`). Every mounted path is writable from inside the container unless `--readonly` is specified, which undermines the filesystem isolation this project provides.
-
-## Network Isolation
-
-By default, containers have full outbound network access. For stricter security, use iptables to restrict network access.
-
-### When to Enable Network Isolation
-
-- Reviewing code that may contain malicious dependencies
-- Auditing software with telemetry or phone-home behavior
-- Maximum isolation for highly sensitive reviews
-
-### Example: Claude + GitHub + Package Registries
-
-```bash
-sudo iptables -A OUTPUT -d api.anthropic.com -j ACCEPT
-sudo iptables -A OUTPUT -d github.com -j ACCEPT
-sudo iptables -A OUTPUT -d raw.githubusercontent.com -j ACCEPT
-sudo iptables -A OUTPUT -d registry.npmjs.org -j ACCEPT
-sudo iptables -A OUTPUT -d pypi.org -j ACCEPT
-sudo iptables -A OUTPUT -d files.pythonhosted.org -j ACCEPT
-sudo iptables -A OUTPUT -o lo -j ACCEPT
-sudo iptables -A OUTPUT -j DROP
-```
-
-### Trade-offs
-
-- Blocks package managers unless you allowlist registries
-- May break tools that require network access
-- DNS resolution still works (consider blocking if paranoid)
-
-## Threat Model
-
-The primary threat this project addresses is **Claude Code running arbitrary commands on your host machine**. When `bypassPermissions` is enabled, Claude executes shell commands, installs packages, and modifies files without confirmation. On a host machine this means it can modify your shell config, `rm -rf` outside the project directory, or abuse locally stored credentials. The devcontainer confines all of that to a disposable container where the blast radius is limited to `/workspace`.
-
-The container includes common development tooling so you can do all development work inside it - not just run Claude. The intended workflow is: clone a repository, start the devcontainer, and work entirely within it. If your project needs additional runtimes or tools beyond what's included, either add them to the Dockerfile for repeated use or install them ad-hoc with `devc exec`.
-
-For the specific boundaries of what is and isn't isolated, see [Security Model](#security-model) below. One nuance worth calling out: the devcontainer runtime automatically forwards your host's SSH agent socket (`SSH_AUTH_SOCK`) into the container. This lets code inside the container authenticate as you over SSH (e.g., `git push`), but the actual private key material stays on the host and is never exposed to the container.
-
-## Security Model
-
-This devcontainer provides **filesystem isolation** but not complete sandboxing.
-
-**Sandboxed:** Filesystem (host files inaccessible), processes (isolated from host), package installations (stay in container)
-
-**Not sandboxed:** Network (full outbound by default—see [Network Isolation](#network-isolation)), git identity (`~/.gitconfig` mounted read-only), SSH agent (socket forwarded, keys stay on host), Docker socket (not mounted by default)
-
-The container auto-configures `bypassPermissions` mode—Claude runs commands without confirmation. This would be risky on a host machine, but the container itself is the sandbox.
-
-See [`SANDBOX.md`](SANDBOX.md) for a concise reference of what the container can and cannot access. This file is also copied into `.devcontainer/sandbox/` when you run `devc template`.
-
-## Container Details
+### Container details
 
 | Component | Details |
 |-----------|---------|
 | Base | Ubuntu 24.04, Node.js 22, Python 3.13 + uv, zsh |
 | User | `vscode` (passwordless sudo), working dir `/workspace` |
 | Tools | `rg`, `fd`, `tmux`, `fzf`, `delta`, `iptables`, `ipset` |
-| Volumes (survive rebuilds) | Command history (`/commandhistory`), Claude config (`~/.claude`), GitHub CLI auth (`~/.config/gh`) |
-| Host mounts | `~/.gitconfig` (read-only), `.devcontainer/` (read-only) |
-| Auto-configured | [anthropics](https://github.com/anthropics/claude-code-plugins) + [trailofbits](https://github.com/trailofbits/claude-code-plugins) skills, git-delta |
+| Persistent volumes | `/commandhistory`, `~/.claude`, `~/.config/gh` |
+| Host mounts | `~/.gitconfig`, `.devcontainer/`, `.git/config`, `.git/hooks` (all read-only) |
+| Auto-installed plugins | [anthropics](https://github.com/anthropics/claude-code-plugins) + [trailofbits](https://github.com/trailofbits/claude-code-plugins) skills |
 
-Volumes are stored outside the container, so your shell history, Claude settings, and `gh` login persist even after `devc rebuild`. Host `~/.gitconfig` is mounted read-only for git identity.
+### Troubleshooting
 
-## Troubleshooting
+**"devcontainer CLI not found"** — `npm install -g @devcontainers/cli`
 
-### "devcontainer CLI not found"
+**Container won't start** — check Docker is running, try `devc rebuild`, check logs with `docker logs $(docker ps -lq)`
 
-```bash
-npm install -g @devcontainers/cli
-```
+**GitHub CLI auth not persisting** — `sudo chown -R $(id -u):$(id -g) ~/.config/gh` inside the container
 
-### Container won't start
+**Claude keeps asking to log in** — the `CLAUDE_CODE_OAUTH_TOKEN` env var isn't reaching the container. Make sure it's exported in your host shell *before* VS Code launches (and fully quit VS Code, not just reload the window). Verify with `echo $CLAUDE_CODE_OAUTH_TOKEN` inside the container.
 
-1. Check Docker is running
-2. Try rebuilding: `devc rebuild`
-3. Check logs: `docker logs $(docker ps -lq)`
+**Python/uv usage** — Python is managed via uv: `uv run script.py`, `uv add package`, `uv run --with requests script.py` for ad-hoc deps.
 
-### GitHub CLI auth not persisting
-
-The gh volume may need ownership fix:
-
-```bash
-sudo chown -R $(id -u):$(id -g) ~/.config/gh
-```
-
-### Python/uv not working
-
-Python is managed via uv:
-
-```bash
-uv run script.py              # Run a script
-uv add package                # Add project dependency
-uv run --with requests py.py  # Ad-hoc dependency
-```
-
-## Development
-
-Build the image manually:
+### Building manually
 
 ```bash
 devcontainer build --workspace-folder .
-```
-
-Test the container:
-
-```bash
 devcontainer up --workspace-folder .
 devcontainer exec --workspace-folder . zsh
 ```
+
+## Credits
+
+Forked from [trailofbits/claude-code-devcontainer](https://github.com/trailofbits/claude-code-devcontainer). All credit for the original sandbox design, `devc` CLI, and security model goes to [Trail of Bits](https://www.trailofbits.com/).
+
+**Changes in this fork:**
+
+- Template installs into `.devcontainer/sandbox/` so VS Code shows a config picker and the sandbox can coexist with project-native devcontainer configs
+- `devc open [dir]` command — installs template + opens folder in VS Code in one step
+- `-y` flag on `devc template` for non-interactive use
+- VS Code GUI workflow: keybinding + task config so the sandbox can be installed into any open folder without touching a terminal
+- `SANDBOX.md` — concise capability/limitation reference, copy-paste firewall rules
+- Sandbox verification test suite (`tests/`) — verifies read-only mounts, env/filesystem isolation, malicious-repo Claude hook exfiltration, network restrictions, build-time exfiltration
