@@ -228,6 +228,7 @@ cmd_template() {
   cp "$SCRIPT_DIR/post_install.py" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/.zshrc" "$devcontainer_dir/"
   cp "$SCRIPT_DIR/SANDBOX.md" "$devcontainer_dir/"
+  cp "$SCRIPT_DIR/firewall.sh" "$devcontainer_dir/"
 
   # Restore preserved mounts
   if [[ -n "$preserved_mounts" ]]; then

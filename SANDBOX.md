@@ -7,7 +7,7 @@ Hardened devcontainer for running Claude Code with `bypassPermissions` safely en
 - Read and modify everything under `/workspace` (your project files)
 - Run any command as `vscode` user (passwordless sudo available)
 - Install packages via apt, npm, pip/uv
-- Access the internet (full outbound network by default)
+- Reach an allowlisted set of hosts — Claude API, GitHub, npm, DNS (egress firewall on by default; see [Network access](#network-access))
 - Use git with your host identity (`~/.gitconfig` mounted read-only)
 - Authenticate to GitHub via `gh` CLI (persisted across restarts)
 
@@ -33,45 +33,55 @@ Everything else (installed packages, files outside `/workspace` and the volumes 
 
 ## Network access
 
-Outbound network is **unrestricted by default**. Run these commands inside the container to restrict it — no config changes or rebuild needed.
+Outbound traffic is restricted to an **egress allowlist by default**. On every container start, `postStartCommand` runs `.devcontainer/sandbox/firewall.sh`, which drops everything except loopback, DNS, and a short list of hosts. The script ships on the read-only `.devcontainer/` mount, so it cannot be altered from inside the container.
 
-### Restrict to Claude API + GitHub only
+### Allowed by default
+
+| Destination | Why |
+|-------------|-----|
+| loopback (`lo`) | local services |
+| DNS (udp/tcp 53) | name resolution |
+| `api.anthropic.com` | Claude API |
+| `claude.ai` | `claude update` (install redirect) |
+| `storage.googleapis.com` | `claude update` (binary download) — shared host |
+| `github.com` | git over HTTPS |
+| `raw.githubusercontent.com` | plugin marketplaces / raw files |
+| `registry.npmjs.org` | npm |
+
+Everything else is dropped.
+
+> **Exfil note:** `storage.googleapis.com`, `raw.githubusercontent.com`, and `github.com` are shared, multi-tenant hosts. The allowlist limits *which hosts* are reachable, not *who owns the data* on them — anyone can create a bucket, gist, or repo. Treat the allowlist as egress-surface reduction, not exfil prevention. Drop `claude.ai` + `storage.googleapis.com` for a tighter list (and update Claude manually with the firewall off).
+
+### Customize the allowlist
+
+Edit the `ALLOW_HOSTS` array in `.devcontainer/sandbox/firewall.sh` (add e.g. `pypi.org` or a client's hosts), then re-apply without a rebuild:
 
 ```bash
-sudo iptables -A OUTPUT -o lo -j ACCEPT
-sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
-sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
-sudo iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-sudo iptables -A OUTPUT -d api.anthropic.com -j ACCEPT
-sudo iptables -A OUTPUT -d github.com -j ACCEPT
-sudo iptables -A OUTPUT -d raw.githubusercontent.com -j ACCEPT
-sudo iptables -A OUTPUT -j DROP
+sudo /workspace/.devcontainer/sandbox/firewall.sh
+```
+
+### Disable
+
+```bash
+sudo iptables -F OUTPUT          # this session only — restores full network until next start
+```
+
+Permanently — set the env var on your **host** (it forwards into the container via `remoteEnv`), then start/rebuild:
+
+```bash
+export SANDBOX_FIREWALL=0
+devc up
 ```
 
 ### Fully offline (no network)
 
 ```bash
+sudo iptables -F OUTPUT
 sudo iptables -A OUTPUT -o lo -j ACCEPT
 sudo iptables -A OUTPUT -j DROP
 ```
 
-### Remove restrictions
-
-```bash
-sudo iptables -F OUTPUT
-```
-
-This flushes all OUTPUT rules, restoring full network access.
-
-### Automatic restrictions on container start
-
-To apply firewall rules automatically, create `.devcontainer/sandbox/firewall.sh` with the rules above and update `postCreateCommand` in `.devcontainer/sandbox/devcontainer.json`:
-
-```json
-"postCreateCommand": "uv run --no-project /opt/post_install.py && sudo /workspace/.devcontainer/sandbox/firewall.sh"
-```
-
-> **Note:** `.devcontainer/` is mounted read-only inside the container, so the firewall script cannot be tampered with from within. Rules are ephemeral — they reset when the container restarts unless applied via `postCreateCommand`.
+> **Notes:** Rules are ephemeral — they reset on container restart and are re-applied by `postStartCommand`. Allowlist hosts are matched by the IP(s) resolved when the rule is inserted, so a host whose IPs rotate mid-session may need a re-run. Because `vscode` has passwordless sudo, the firewall is a guardrail against accidental egress, not a hard boundary against a fully adversarial agent.
 
 ## Auth
 

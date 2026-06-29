@@ -67,10 +67,12 @@
   },
   "remoteEnv": {
     "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN:}",
-    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY:}"
+    "ANTHROPIC_API_KEY": "${localEnv:ANTHROPIC_API_KEY:}",
+    "SANDBOX_FIREWALL": "${localEnv:SANDBOX_FIREWALL:1}"
   },
   "initializeCommand": "test -f \"$HOME/.gitconfig\" || touch \"$HOME/.gitconfig\"",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "postCreateCommand": "uv run --no-project /opt/post_install.py"
+  "postCreateCommand": "uv run --no-project /opt/post_install.py",
+  "postStartCommand": "claude update || true; if [ \"${SANDBOX_FIREWALL:-1}\" != 0 ]; then sudo bash /workspace/.devcontainer/sandbox/firewall.sh; fi"
 }

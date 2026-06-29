@@ -2,7 +2,7 @@
 
 A devcontainer that runs Claude Code with `bypassPermissions` safely enabled, so you can let it modify code freely without risking your host. Built at [Trail of Bits](https://www.trailofbits.com/) for security audit workflows — useful any time you'd rather Claude not touch your host filesystem.
 
-> **Heads up:** outbound network access is **unrestricted by default**. The container provides filesystem isolation, not network isolation. See [Network isolation](#network-isolation) below to lock it down with iptables.
+> **Heads up:** outbound network is restricted to an **egress allowlist by default** (Claude API, GitHub, npm, DNS) — everything else is dropped on container start. See [Network isolation](#network-isolation) to view, extend, or disable it.
 
 ## Install
 
@@ -60,10 +60,10 @@ The container ships with common dev tooling so you can do all your work inside i
 **Sandboxed:**
 - **Filesystem** — container sees `/workspace` and a read-only `~/.gitconfig`. Host files are inaccessible.
 - **Config integrity** — `.devcontainer/`, `.git/config`, and `.git/hooks` are mounted read-only inside the container, blocking config-injection and git-hook escape vectors.
+- **Network** — outbound egress is restricted to an allowlist (Claude API, GitHub, npm, DNS) by default; everything else is dropped. See [Network isolation](#network-isolation) to extend or disable. This is a guardrail against accidental/unwanted egress — a process with `sudo` can still flush the live rules, so it is not a hard boundary against a fully adversarial agent.
 - **Persistent state** — Claude auth, shell history, and `gh` login persist via Docker volumes. Destroyed by `devc destroy`.
 
 **Not sandboxed by default:**
-- **Network** — full outbound access (see [Network isolation](#network-isolation))
 - **SSH agent** — the host's `SSH_AUTH_SOCK` is forwarded so the container can `git push` as you. Private key material stays on the host.
 - **Docker socket** — not mounted
 
@@ -135,18 +135,41 @@ Then in any folder: `Ctrl+Shift+D` (installs config silently) → `Cmd+Shift+P` 
 
 ### Network isolation
 
-Outbound network is unrestricted by default. To block it, run inside the container:
+**Enabled by default.** On every container start, `postStartCommand` runs `firewall.sh`, which drops all outbound traffic except an allowlist. The rules applied are:
 
 ```bash
 sudo iptables -A OUTPUT -o lo -j ACCEPT                                    # loopback
-sudo iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT     # replies
+sudo iptables -A OUTPUT -p udp --dport 53 -j ACCEPT                        # DNS
+sudo iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT                        # DNS (TCP fallback)
 sudo iptables -A OUTPUT -d api.anthropic.com -j ACCEPT                     # Claude API
+sudo iptables -A OUTPUT -d claude.ai -j ACCEPT                             # claude update
+sudo iptables -A OUTPUT -d storage.googleapis.com -j ACCEPT               # claude update (binary)
 sudo iptables -A OUTPUT -d github.com -j ACCEPT                            # git
-sudo iptables -A OUTPUT -d registry.npmjs.org -j ACCEPT                    # npm (optional)
+sudo iptables -A OUTPUT -d raw.githubusercontent.com -j ACCEPT             # plugin marketplaces
+sudo iptables -A OUTPUT -d registry.npmjs.org -j ACCEPT                    # npm
 sudo iptables -A OUTPUT -j DROP                                            # block everything else
 ```
 
-Undo with `sudo iptables -F OUTPUT`. To apply automatically on container start, see [`SANDBOX.md`](SANDBOX.md).
+The script lives at `.devcontainer/sandbox/firewall.sh` and is mounted **read-only**, so it can't be rewritten from inside the container.
+
+**Customize:** edit the `ALLOW_HOSTS` list in `.devcontainer/sandbox/firewall.sh` (e.g. add `pypi.org`, your client's hosts), then re-run `sudo /workspace/.devcontainer/sandbox/firewall.sh` or restart the container.
+
+**Disable for one session** (restores full network until next start):
+
+```bash
+sudo iptables -F OUTPUT
+```
+
+**Disable permanently** — set the env var on your **host** before starting the container, and it forwards in:
+
+```bash
+export SANDBOX_FIREWALL=0      # in your host shell, then: devc up   (or rebuild)
+```
+
+> **Caveats:** Allowlist entries are matched by IP resolved when the rule is added, so a host whose IPs rotate mid-session may need a re-run. And because `vscode` has passwordless sudo, this is a guardrail against accidental egress, not a hard boundary against a fully adversarial agent. See [`SANDBOX.md`](SANDBOX.md) for the offline-only variant.
+>
+> **Exfil note:** several allowlisted hosts are shared and multi-tenant — `storage.googleapis.com`, `raw.githubusercontent.com`, and `github.com`. The allowlist restricts *which hosts* are reachable, not *who controls the data* on them: anyone can create a GCS bucket, gist, or repo. Data can still be exfiltrated to an attacker-controlled destination on those hosts. Drop `claude.ai` + `storage.googleapis.com` from `firewall.sh` if you want a tighter allowlist and are willing to update Claude manually with the firewall off.
 
 ### File sharing
 
@@ -218,6 +241,7 @@ Same as the [Skip the login prompt](#skip-the-login-prompt) section above — th
 | Tools | `rg`, `fd`, `tmux`, `fzf`, `delta`, `iptables`, `ipset` |
 | Persistent volumes | `/commandhistory`, `~/.claude`, `~/.config/gh` |
 | Host mounts | `~/.gitconfig`, `.devcontainer/`, `.git/config`, `.git/hooks` (all read-only) |
+| Network | Egress allowlist on by default via `firewall.sh` (`SANDBOX_FIREWALL=0` to disable) |
 | Auto-installed plugins | [anthropics](https://github.com/anthropics/claude-code-plugins) + [trailofbits](https://github.com/trailofbits/claude-code-plugins) skills |
 
 ### Troubleshooting

@@ -2,6 +2,10 @@
 # Verify that network restrictions can be applied and enforced.
 # Tests against localhost to avoid external dependencies.
 
+# Start from a known baseline: the default egress firewall (firewall.sh) is
+# applied on container start, so flush OUTPUT before asserting the manual path.
+sudo iptables -F OUTPUT
+
 LISTEN_PORT=18923
 
 # Start a temporary HTTP server on localhost
